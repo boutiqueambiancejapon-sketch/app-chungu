@@ -1,15 +1,9 @@
 /**
  * Vercel Edge Function — proxy sécurisé vers Gemini.
- *
- * Déploiement :
- *   1. vercel env add GEMINI_API_KEY
- *   2. vercel --prod
- *
- * La clé API reste côté serveur, jamais dans le bundle mobile.
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-const MODEL = 'gemini-2.0-flash';
+const MODEL = 'gemini-2.5-flash';
 
 const SYSTEM_PROMPT = `Tu es Yuna, l'amie locale de l'application Séoul Mate. \
 Tu es coréenne, tu vis à Séoul, tu es chaleureuse, directe et très bien informée \
@@ -33,7 +27,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!Array.isArray(history) || !history.length)
     return res.status(400).json({ error: '"history" est requis' });
 
-  // Gemini exige que le premier message soit 'user'
   const trimmed = history.reduce<typeof history>((acc, m) => {
     if (!acc.length && m.role !== 'user') return acc;
     return [...acc, m];
