@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity,
   KeyboardAvoidingView, Platform, StyleSheet, ActivityIndicator,
@@ -8,10 +8,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppStore } from '../src/store/useAppStore';
+import { useAuthStore } from '../src/store/useAuthStore';
 import { useColors } from '../src/design/useColors';
 import { YunaAvatar } from '../src/components/yuna/YunaAvatar';
 import { SMCard } from '../src/components/ui/SMCard';
 import { sendToYuna, ChatMessage } from '../src/services/yunaService';
+import { supabase } from '../src/services/supabase';
 import { gradients, sp, r } from '../src/design/tokens';
 
 const SUGGESTIONS = [
@@ -23,19 +25,54 @@ const SUGGESTIONS = [
 
 interface Message { id: string; role: 'user' | 'yuna'; text: string; }
 
+const WELCOME: Message = {
+  id: '0', role: 'yuna',
+  text: "Annyeong ! 안녕 ! Il est l'heure de découvrir Séoul. Tu veux une idée pour ce soir, ou un coup de main pratique ?",
+};
+
 export default function YunaScreen() {
   const c = useColors();
   const { isDayMode, toggleTheme } = useAppStore();
+  const { user } = useAuthStore();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
 
-  const [messages, setMessages] = useState<Message[]>([{
-    id: '0', role: 'yuna',
-    text: "Annyeong ! 안녕 ! Il est l'heure de découvrir Séoul. Tu veux une idée pour ce soir, ou un coup de main pratique ?",
-  }]);
+  const [messages, setMessages] = useState<Message[]>([WELCOME]);
   const [draft, setDraft] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+
+  // Charge l'historique depuis Supabase
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from('conversations')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: true })
+      .limit(50)
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          const loaded: Message[] = data.map(row => ({
+            id: row.id,
+            role: row.role === 'user' ? 'user' : 'yuna',
+            text: row.content,
+          }));
+          setMessages([WELCOME, ...loaded]);
+        }
+        setHistoryLoaded(true);
+      });
+  }, [user]);
+
+  const save = async (role: 'user' | 'model', text: string) => {
+    if (!user) return;
+    await supabase.from('conversations').insert({
+      user_id: user.id,
+      role,
+      content: text,
+    });
+  };
 
   const send = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -44,14 +81,16 @@ export default function YunaScreen() {
     setMessages(prev => [...prev, userMsg]);
     setDraft('');
     setIsTyping(true);
+    await save('user', trimmed);
 
     const history: ChatMessage[] = [...messages, userMsg]
-      .filter(m => !(m.role === 'yuna' && m.id === '0'))
+      .filter(m => m.id !== '0')
       .map(m => ({ role: m.role === 'user' ? 'user' : 'model', text: m.text }));
 
     try {
       const reply = await sendToYuna(history);
       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'yuna', text: reply }]);
+      await save('model', reply);
     } catch (e) {
       const err = e instanceof Error ? e.message : 'Erreur inconnue';
       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'yuna', text: `⚠️ ${err}` }]);
@@ -59,11 +98,10 @@ export default function YunaScreen() {
       setIsTyping(false);
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
     }
-  }, [messages]);
+  }, [messages, user]);
 
   return (
     <View style={[styles.root, { backgroundColor: c.bg }]}>
-      {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: c.hairline }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={12} activeOpacity={0.7}>
           <Ionicons name="chevron-down" size={26} color={c.text} />
@@ -83,7 +121,6 @@ export default function YunaScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Messages */}
       <ScrollView ref={scrollRef} style={{ flex: 1 }}
         contentContainerStyle={{ padding: sp.md, gap: sp.md }}
         showsVerticalScrollIndicator={false}
@@ -114,7 +151,6 @@ export default function YunaScreen() {
         )}
       </ScrollView>
 
-      {/* Input */}
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         {messages.length < 3 && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false}
