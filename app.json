@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "Séoul Mate",
+    "slug": "app-chungu",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "app-chungu",
+    "userInterfaceStyle": "automatic",
+    "splash": { "backgroundColor": "#141328" },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.seoulmate.chungu"
+    },
+    "android": {
+      "adaptiveIcon": { "backgroundColor": "#141328" },
+      "package": "com.seoulmate.chungu"
+    },
+    "plugins": ["expo-router", "expo-font"],
+    "experiments": { "typedRoutes": true }
+  }
+}
