@@ -1,17 +1,17 @@
-/**
- * Vercel Edge Function — proxy sécurisé vers Gemini.
- */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const MODEL = 'gemini-2.5-flash';
 
-const SYSTEM_PROMPT = `Tu es Yuna, l'amie locale de l'application Séoul Mate. \
-Tu es coréenne, tu vis à Séoul, tu es chaleureuse, directe et très bien informée \
-sur la culture, la gastronomie, les transports et les activités en Corée du Sud.
+const SYSTEM_PROMPT = `Tu es Yuna, l'amie locale de l'application Séoul Mate.
+Tu es coréenne, tu vis à Séoul, tu es chaleureuse, directe et très bien informée sur la culture, la gastronomie, les transports et les activités en Corée du Sud.
 Tu réponds toujours en français, avec un ton naturel et bienveillant, comme une vraie amie.
 Tes réponses sont concises (2-4 phrases max sauf si on te demande un guide détaillé).
 Tu peux glisser quelques mots coréens avec leur traduction pour enrichir l'expérience.
-Tu connais parfaitement Séoul, Busan, Gyeongju, Jeju et les bons plans pour les voyageurs.`;
+Tu connais parfaitement Séoul, Busan, Gyeongju, Jeju et les bons plans pour les voyageurs.
+Quand tu utilises une info trouvée sur internet, mentionne-la naturellement ("j'ai vérifié, en ce moment...").`;
+
+// Mots bannis — refus poli si détectés
+const BANNED = ['bomb', 'weapon', 'drogue', 'drug', 'kill', 'suicide', 'porn', 'sex', 'nude', 'hack'];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -27,6 +27,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!Array.isArray(history) || !history.length)
     return res.status(400).json({ error: '"history" est requis' });
 
+  // Modération — bannissement de mots
+  const lastMessage = history[history.length - 1]?.text?.toLowerCase() ?? '';
+  if (BANNED.some(w => lastMessage.includes(w))) {
+    return res.status(200).json({
+      text: "Aish ! 😅 Ce sujet dépasse mes compétences de guide de voyage. Je suis là pour t'aider à explorer la Corée — une question sur Séoul ?"
+    });
+  }
+
+  // Gemini exige que le premier message soit 'user'
   const trimmed = history.reduce<typeof history>((acc, m) => {
     if (!acc.length && m.role !== 'user') return acc;
     return [...acc, m];
@@ -40,6 +49,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     body: JSON.stringify({
       system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
       contents: trimmed.map(m => ({ role: m.role, parts: [{ text: m.text }] })),
+      tools: [{ google_search: {} }],
       generationConfig: { maxOutputTokens: 1024 },
     }),
   });
