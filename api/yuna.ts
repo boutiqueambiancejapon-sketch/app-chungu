@@ -20,7 +20,7 @@ Tu peux glisser quelques mots coréens avec leur traduction.
 Tu connais parfaitement Séoul, Busan, Gyeongju, Jeju et les bons plans pour les voyageurs.
 
 CONTEXTE TEMPOREL : Nous sommes le ${dateStr}, il est ${timeStr} (heure de Séoul).
-Quand on te demande des infos sur "aujourd'hui", "ce soir", "maintenant" : utilise Google Search pour trouver des infos actuelles et précises. Mentionne naturellement que tu viens de vérifier.
+Quand on te demande des infos sur "aujourd'hui", "ce soir", "maintenant" : utilise Google Search pour trouver des infos actuelles et précises.
 
 FORMAT : Réponds en texte brut sans markdown. Pas de ** gras **, pas de * listes *, pas de # titres. Du texte naturel comme dans un SMS.
 
@@ -63,10 +63,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!Array.isArray(history) || !history.length)
     return res.status(400).json({ error: '"history" est requis' });
 
-  // Modération locale
   const lastUserMsg = [...history].reverse().find(m => m.role === 'user')?.text ?? '';
   if (BANNED_PATTERNS.some(p => p.test(lastUserMsg))) {
-    return res.status(200).json({ text: REFUSAL });
+    return res.status(200).json({ text: REFUSAL, sources: [] });
   }
 
   const trimmed = history.reduce<typeof history>((acc, m) => {
@@ -97,12 +96,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const data = await upstream.json();
 
   if (data?.candidates?.[0]?.finishReason === 'SAFETY') {
-    return res.status(200).json({ text: REFUSAL });
+    return res.status(200).json({ text: REFUSAL, sources: [] });
   }
 
-  // Nettoie le markdown résiduel
   let text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
   text = text.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1').replace(/^#+\s/gm, '');
 
-  return res.status(200).json({ text });
+  // Extrait les sources Google depuis le grounding metadata
+  const chunks = data?.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+  const sources: { title: string; url: string }[] = chunks
+    .filter((c: any) => c?.web?.uri)
+    .map((c: any) => ({
+      title: c.web.title ?? new URL(c.web.uri).hostname,
+      url: c.web.uri,
+    }))
+    .slice(0, 4); // max 4 sources
+
+  return res.status(200).json({ text, sources });
 }
