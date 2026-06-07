@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, StyleSheet, ActivityIndicator,
+  KeyboardAvoidingView, Platform, StyleSheet, ActivityIndicator, Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,7 +12,7 @@ import { useAuthStore } from '../src/store/useAuthStore';
 import { useColors } from '../src/design/useColors';
 import { YunaAvatar } from '../src/components/yuna/YunaAvatar';
 import { SMCard } from '../src/components/ui/SMCard';
-import { sendToYuna, ChatMessage } from '../src/services/yunaService';
+import { sendToYuna, ChatMessage, YunaSource } from '../src/services/yunaService';
 import { supabase } from '../src/services/supabase';
 import { gradients, sp, r } from '../src/design/tokens';
 
@@ -23,7 +23,12 @@ const SUGGESTIONS = [
   'Étiquette à table en Corée',
 ];
 
-interface Message { id: string; role: 'user' | 'yuna'; text: string; }
+interface Message {
+  id: string;
+  role: 'user' | 'yuna';
+  text: string;
+  sources?: YunaSource[];
+}
 
 const WELCOME: Message = {
   id: '0', role: 'yuna',
@@ -41,9 +46,7 @@ export default function YunaScreen() {
   const [messages, setMessages] = useState<Message[]>([WELCOME]);
   const [draft, setDraft] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
 
-  // Charge l'historique depuis Supabase
   useEffect(() => {
     if (!user) return;
     supabase
@@ -61,17 +64,12 @@ export default function YunaScreen() {
           }));
           setMessages([WELCOME, ...loaded]);
         }
-        setHistoryLoaded(true);
       });
   }, [user]);
 
   const save = async (role: 'user' | 'model', text: string) => {
     if (!user) return;
-    await supabase.from('conversations').insert({
-      user_id: user.id,
-      role,
-      content: text,
-    });
+    await supabase.from('conversations').insert({ user_id: user.id, role, content: text });
   };
 
   const send = useCallback(async (text: string) => {
@@ -88,8 +86,10 @@ export default function YunaScreen() {
       .map(m => ({ role: m.role === 'user' ? 'user' : 'model', text: m.text }));
 
     try {
-      const reply = await sendToYuna(history);
-      setMessages(prev => [...prev, { id: Date.now().toString(), role: 'yuna', text: reply }]);
+      const { text: reply, sources } = await sendToYuna(history);
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(), role: 'yuna', text: reply, sources,
+      }]);
       await save('model', reply);
     } catch (e) {
       const err = e instanceof Error ? e.message : 'Erreur inconnue';
@@ -102,6 +102,7 @@ export default function YunaScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: c.bg }]}>
+      {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: c.hairline }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={12} activeOpacity={0.7}>
           <Ionicons name="chevron-down" size={26} color={c.text} />
@@ -121,6 +122,7 @@ export default function YunaScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Messages */}
       <ScrollView ref={scrollRef} style={{ flex: 1 }}
         contentContainerStyle={{ padding: sp.md, gap: sp.md }}
         showsVerticalScrollIndicator={false}
@@ -135,9 +137,27 @@ export default function YunaScreen() {
           ) : (
             <View key={msg.id} style={styles.yunaRow}>
               <YunaAvatar size={30} showRing={false} />
-              <SMCard style={styles.yunaBubble} padding={0}>
-                <Text style={[styles.yunaText, { color: c.text }]}>{msg.text}</Text>
-              </SMCard>
+              <View style={{ flex: 1, maxWidth: '85%', gap: 6 }}>
+                <SMCard style={styles.yunaBubble} padding={0}>
+                  <Text style={[styles.yunaText, { color: c.text }]}>{msg.text}</Text>
+                </SMCard>
+                {/* Sources Google */}
+                {msg.sources && msg.sources.length > 0 && (
+                  <View style={styles.sourcesRow}>
+                    {msg.sources.map((s, i) => (
+                      <TouchableOpacity key={i} onPress={() => Linking.openURL(s.url)}
+                        style={[styles.sourceChip, { backgroundColor: c.surface2, borderColor: c.hairline }]}
+                        activeOpacity={0.7}>
+                        <Ionicons name="globe-outline" size={11} color={c.text3} />
+                        <Text style={[styles.sourceText, { color: c.text2 }]} numberOfLines={1}>
+                          {s.title}
+                        </Text>
+                        <Ionicons name="open-outline" size={10} color={c.text3} />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </View>
             </View>
           )
         )}
@@ -151,6 +171,7 @@ export default function YunaScreen() {
         )}
       </ScrollView>
 
+      {/* Input */}
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         {messages.length < 3 && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false}
@@ -193,8 +214,11 @@ const styles = StyleSheet.create({
   userBubble: { maxWidth: '78%', borderRadius: 18, borderBottomRightRadius: 5, paddingHorizontal: 15, paddingVertical: 12 },
   userText: { color: '#fff', fontSize: 14.5, lineHeight: 20 },
   yunaRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 9 },
-  yunaBubble: { flex: 1, maxWidth: '78%' },
+  yunaBubble: { flex: 1 },
   yunaText: { fontSize: 14.5, lineHeight: 22, padding: 15 },
+  sourcesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingLeft: 2 },
+  sourceChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, borderWidth: 1, maxWidth: 200 },
+  sourceText: { fontSize: 11, fontWeight: '600', flex: 1 },
   chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1 },
   chipText: { fontSize: 12.5, fontWeight: '600' },
   inputBar: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: sp.md, paddingTop: 12, gap: 9, borderTopWidth: StyleSheet.hairlineWidth },
